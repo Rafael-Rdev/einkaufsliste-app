@@ -11,7 +11,11 @@
     <link rel="apple-touch-icon" href="https://img.icons8.com/color/180/000000/shopping-basket-2.png">
     <link rel="icon" type="image/png" href="https://img.icons8.com/color/96/000000/shopping-basket-2.png">
     
-    <title>Einkaufsliste</title>
+    <title>Einkaufsliste | Gemeinsamer Familien-Einkauf</title>
+    <meta name="description" content="Eine einfache, cloud-synchronisierte Einkaufsliste für die ganze Familie. Erstellen, teilen und gemeinsam einkaufen.">
+    <meta name="keywords" content="Einkaufsliste, Shopping List, Familie, Firebase, Cloud Sync, Kostenlos">
+    <meta name="author" content="Rafael Rygiel">
+    <meta name="theme-color" content="#3b82f6">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script>
@@ -61,6 +65,8 @@
         .item-card:active .edit-btn { opacity: 1; }
 
         .modal-overlay { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+        .completed-text { text-decoration: line-through; opacity: 0.5; }
+        .checkbox-circle { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
     </style>
 </head>
 <body class="h-screen flex flex-col items-center bg-gray-50 dark:bg-black text-gray-900 dark:text-white transition-colors duration-300">
@@ -155,7 +161,42 @@
         </div>
     </div>
 
-    <script>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import {
+            initializeFirestore,
+            persistentLocalCache,
+            persistentMultipleTabManager,
+            collection,
+            addDoc,
+            updateDoc,
+            deleteDoc,
+            doc,
+            onSnapshot,
+            query,
+            orderBy,
+            serverTimestamp,
+            writeBatch,
+            getDocs,
+            where
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDFiysUmKOqmgnm4TPk2zfoU-k0WDfRpeg",
+            authDomain: "einkaufsliste-rafael-2026.firebaseapp.com",
+            projectId: "einkaufsliste-rafael-2026",
+            storageBucket: "einkaufsliste-rafael-2026.firebasestorage.app",
+            messagingSenderId: "893468412805",
+            appId: "1:893468412805:web:49433a06233dc915de52ec"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = initializeFirestore(app, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+        });
+        const itemsCol = collection(db, "items");
+
         const categories = {
             'obst_gemuese': { id: 'obst_gemuese', name: 'Obst & Gemüse', icon: '🥑', color: 'text-green-600', bg: 'bg-green-500' },
             'kuehlregal': { id: 'kuehlregal', name: 'Kühlregal', icon: '🧀', color: 'text-blue-600', bg: 'bg-blue-500' },
@@ -168,10 +209,19 @@
         let selectedCategory = 'obst_gemuese';
         let editItemId = null;
 
+        // Initialize App
         function init() {
-            loadData();
             renderCategorySelector();
-            render();
+            
+            // Real-time listener from Firestore
+            const q = query(itemsCol, orderBy("timestamp", "desc"));
+            onSnapshot(q, (snapshot) => {
+                items = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                render();
+            });
         }
 
         function parseItemInput(text) {
@@ -185,54 +235,61 @@
 
         function determineCategory(name) {
             const n = name.toLowerCase();
-            if (n.match(/(apfel|birne|banane|gurke|tomate|salat|spinat|zwiebel|kartoffel|karotte|obst|gemüse|beere)/)) return 'obst_gemuese';
-            if (n.match(/(milch|käse|joghurt|quark|sahne|butter|feta|mozarella|ei)/)) return 'kuehlregal';
-            if (n.match(/(fleisch|wurst|bacon|hähnchen|rind|gulasch|salami)/)) return 'fleisch';
-            if (n.match(/(nudel|reis|mehl|zucker|salz|brot|toast|brötchen|konserve|glas|dose|öl|essig|gewürz|kaffee)/)) return 'vorrat';
+            if (n.match(/(apfel|birne|banane|gurke|tomate|salat|spinat|zwiebel|kartoffel|karotte|obst|gemüse|beere|zitrone|paprika|brokkoli|knoblauch|ingwer)/)) return 'obst_gemuese';
+            if (n.match(/(milch|käse|joghurt|quark|sahne|butter|feta|mozarella|ei|käse|philadelphia|mascarpone)/)) return 'kuehlregal';
+            if (n.match(/(fleisch|wurst|bacon|hähnchen|rind|gulasch|salami|hackfleisch|steak|schinken)/)) return 'fleisch';
+            if (n.match(/(nudel|reis|mehl|zucker|salz|brot|toast|brötchen|konserve|glas|dose|öl|essig|gewürz|kaffee|tee|müsli|haferflocken|spaghetti|pesto)/)) return 'vorrat';
             return 'sonstiges';
         }
 
-        function addNewItem() {
+        async function addNewItem() {
             const input = document.getElementById('new-item-input');
             const rawText = input.value.trim();
             if (!rawText) return;
 
             const { qty, name } = parseItemInput(rawText);
             
-            items.unshift({
-                id: Date.now(),
-                name: name,
-                qty: qty,
-                category: selectedCategory,
-                completed: false
-            });
-
-            saveData();
-            vibrate([10]);
-            input.value = '';
-            render();
+            try {
+                await addDoc(itemsCol, {
+                    name: name,
+                    qty: qty,
+                    category: selectedCategory,
+                    completed: false,
+                    timestamp: serverTimestamp()
+                });
+                vibrate([10]);
+                input.value = '';
+            } catch (e) {
+                console.error("Error adding document: ", e);
+            }
         }
 
-        function processImport() {
+        async function processImport() {
             const text = document.getElementById('import-area').value;
             if (!text.trim()) return;
             
             const lines = text.split(/[\n,]+/).map(s => s.trim()).filter(s => s.length > 0);
+            const batch = writeBatch(db);
+
             lines.forEach(line => {
                 const { qty, name } = parseItemInput(line);
-                items.unshift({
-                    id: Date.now() + Math.random(),
+                const newDocRef = doc(itemsCol);
+                batch.set(newDocRef, {
                     name: name,
                     qty: qty,
                     category: determineCategory(name),
-                    completed: false
+                    completed: false,
+                    timestamp: serverTimestamp()
                 });
             });
 
-            saveData();
-            closeImport();
-            render();
-            vibrate([50]);
+            try {
+                await batch.commit();
+                closeImport();
+                vibrate([50]);
+            } catch (e) {
+                console.error("Error committing batch: ", e);
+            }
         }
 
         function openEdit(event, id) {
@@ -252,17 +309,19 @@
             editItemId = null;
         }
 
-        function saveEdit() {
+        async function saveEdit() {
             if (!editItemId) return;
             const newText = document.getElementById('edit-input').value.trim();
             if (newText) {
                 const { qty, name } = parseItemInput(newText);
-                const idx = items.findIndex(i => i.id === editItemId);
-                if (idx > -1) {
-                    items[idx].name = name;
-                    items[idx].qty = qty;
-                    saveData();
-                    render();
+                const itemRef = doc(db, "items", editItemId);
+                try {
+                    await updateDoc(itemRef, {
+                        name: name,
+                        qty: qty
+                    });
+                } catch (e) {
+                    console.error("Error updating document: ", e);
                 }
             }
             closeEdit();
@@ -272,7 +331,7 @@
             const qtyBadge = item.qty ? `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold px-2 py-0.5 rounded-md mr-2">${item.qty}</span>` : '';
             
             return `
-                <div onclick="toggleItem(${item.id})" 
+                <div onclick="toggleItem('${item.id}')" 
                     class="item-card bg-white dark:bg-[#1C1C1E] mx-2 mb-2 p-4 rounded-2xl flex items-center gap-3 cursor-pointer active:scale-[0.98] select-none animate-slide-up relative border border-transparent dark:border-transparent ${!isCompleted ? 'shadow-sm border-gray-50 dark:border-gray-800' : ''}">
                     
                     <div class="w-6 h-6 rounded-full border-[1.5px] flex items-center justify-center checkbox-circle shrink-0
@@ -287,12 +346,12 @@
                     </div>
 
                     ${!isCompleted ? `
-                    <button onclick="openEdit(event, ${item.id})" class="edit-btn text-gray-300 hover:text-blue-500 p-2">
+                    <button onclick="openEdit(event, '${item.id}')" class="edit-btn text-gray-300 hover:text-blue-500 p-2">
                         <i class="fas fa-pen text-xs"></i>
                     </button>
                     ` : ''}
                     
-                    <button onclick="deleteItem(event, ${item.id})" class="delete-btn text-gray-300 hover:text-red-500 p-2">
+                    <button onclick="deleteItem(event, '${item.id}')" class="delete-btn text-gray-300 hover:text-red-500 p-2">
                         <i class="fas fa-times text-sm"></i>
                     </button>
                 </div>
@@ -313,12 +372,14 @@
             `).join('');
         }
 
-        function selectCategory(id) { vibrate([5]); selectedCategory = id; renderCategorySelector(); }
+        window.selectCategory = (id) => { vibrate([5]); selectedCategory = id; renderCategorySelector(); };
         
         function render() {
             const activeEl = document.getElementById('active-list');
             const completedEl = document.getElementById('completed-list');
             const emptyEl = document.getElementById('empty-state');
+            
+            if (!activeEl || !completedEl || !emptyEl) return;
             
             activeEl.innerHTML = ''; completedEl.innerHTML = '';
             
@@ -348,40 +409,76 @@
             activeEl.classList.toggle('hidden', active.length === 0 && total === 0);
         }
 
-        function saveData() { localStorage.setItem('shoppingList_family_v1', JSON.stringify(items)); }
-        function loadData() {
-            const s = localStorage.getItem('shoppingList_family_v1');
-            const old = localStorage.getItem('shoppingList_final_v2'); 
-            if(s) items = JSON.parse(s);
-            else if(old) { items = JSON.parse(old); saveData(); }
-        }
         function vibrate(p=[10]) { if(navigator.vibrate) navigator.vibrate(p); }
         
-        function toggleItem(id) {
-            const idx = items.findIndex(i => i.id === id);
-            if(idx > -1) { items[idx].completed = !items[idx].completed; saveData(); render(); vibrate([5]); }
+        async function toggleItem(id) {
+            const item = items.find(i => i.id === id);
+            if(item) {
+                const itemRef = doc(db, "items", id);
+                try {
+                    await updateDoc(itemRef, { completed: !item.completed });
+                    vibrate([5]);
+                } catch (e) { console.error(e); }
+            }
         }
-        function deleteItem(e, id) { e.stopPropagation(); items = items.filter(i => i.id !== id); saveData(); render(); vibrate([10]); }
-        function clearCompleted() { if(confirm('Erledigte löschen?')) { items = items.filter(i => !i.completed); saveData(); render(); vibrate([20]); } }
+
+        async function deleteItem(e, id) { 
+            e.stopPropagation(); 
+            const itemRef = doc(db, "items", id);
+            try {
+                await deleteDoc(itemRef);
+                vibrate([10]);
+            } catch (e) { console.error(e); }
+        }
+
+        async function clearCompleted() { 
+            if(confirm('Erledigte löschen?')) { 
+                const completed = items.filter(i => i.completed);
+                const batch = writeBatch(db);
+                completed.forEach(item => {
+                    batch.delete(doc(db, "items", item.id));
+                });
+                try {
+                    await batch.commit();
+                    vibrate([20]);
+                } catch (e) { console.error(e); }
+            } 
+        }
         
-        function openImport() { document.getElementById('import-modal').classList.remove('hidden'); document.getElementById('import-area').focus(); }
-        function closeImport() { document.getElementById('import-modal').classList.add('hidden'); }
+        window.openImport = () => { document.getElementById('import-modal').classList.remove('hidden'); document.getElementById('import-area').focus(); };
+        window.closeImport = () => { document.getElementById('import-modal').classList.add('hidden'); };
+        
         async function shareList() {
             const active = items.filter(i => !i.completed);
             if(!active.length) return;
             let t = "🛒 Einkauf:\n";
             active.forEach(i => t += `- ${i.qty ? i.qty+' ' : ''}${i.name}\n`);
             if(navigator.share) try { await navigator.share({title:'Liste', text:t}); } catch(e){}
-            else alert('Kopiert!');
+            else {
+                navigator.clipboard.writeText(t);
+                alert('Kopiert!');
+            }
         }
 
         document.getElementById('new-item-input').addEventListener('keypress', e => { if(e.key === 'Enter') addNewItem(); });
-        function toggleCompletedList() {
+        
+        window.toggleCompletedList = () => {
             const c = document.getElementById('completed-container');
             const i = document.getElementById('toggle-icon');
             c.classList.toggle('hidden');
             i.style.transform = c.classList.contains('hidden') ? 'rotate(0deg)' : 'rotate(180deg)';
-        }
+        };
+
+        // Make functions global for inline onclick
+        window.addNewItem = addNewItem;
+        window.toggleItem = toggleItem;
+        window.deleteItem = deleteItem;
+        window.clearCompleted = clearCompleted;
+        window.processImport = processImport;
+        window.openEdit = openEdit;
+        window.closeEdit = closeEdit;
+        window.saveEdit = saveEdit;
+        window.shareList = shareList;
 
         init();
     </script>
